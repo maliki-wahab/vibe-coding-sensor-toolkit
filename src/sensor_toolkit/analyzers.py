@@ -9,7 +9,15 @@ from sensor_toolkit.validators import SensorReading
 
 @dataclass
 class FieldStats:
-    """Statistics for a single measurement field."""
+    """Statistics for a single measurement field.
+
+    Attributes:
+        mean: Arithmetic mean of the values.
+        median: Median value (middle value or average of two middle values).
+        std: Population standard deviation.
+        min: Minimum value observed.
+        max: Maximum value observed.
+    """
 
     mean: float
     median: float
@@ -39,7 +47,14 @@ class StatsResult:
 
 @dataclass
 class Anomaly:
-    """Detected anomaly in sensor data."""
+    """Detected anomaly in sensor data.
+
+    Attributes:
+        reading: The SensorReading that contains the anomalous value.
+        field: Name of the anomalous field ("temperature", "pressure", or "humidity").
+        value: The anomalous measurement value.
+        z_score: The z-score indicating how far the value deviates from the mean.
+    """
 
     reading: SensorReading
     field: str
@@ -80,23 +95,23 @@ def calculate_statistics(readings: list[SensorReading]) -> dict[str, StatsResult
     for r in readings:
         if r.sensor_id not in by_sensor:
             by_sensor[r.sensor_id] = {"temperature": [], "pressure": [], "humidity": []}
-        data = by_sensor[r.sensor_id]
+        sensor_data = by_sensor[r.sensor_id]
         if not math.isnan(r.temperature):
-            data["temperature"].append(r.temperature)
+            sensor_data["temperature"].append(r.temperature)
         if not math.isnan(r.pressure):
-            data["pressure"].append(r.pressure)
+            sensor_data["pressure"].append(r.pressure)
         if not math.isnan(r.humidity):
-            data["humidity"].append(r.humidity)
+            sensor_data["humidity"].append(r.humidity)
 
     results: dict[str, StatsResult] = {}
-    for sensor_id, data in by_sensor.items():
-        count = max(len(v) for v in data.values())
+    for sensor_id, sensor_data in by_sensor.items():
+        count = max(len(v) for v in sensor_data.values())
         results[sensor_id] = StatsResult(
             sensor_id=sensor_id,
             reading_count=count,
-            temperature=_compute_stats(data["temperature"]),
-            pressure=_compute_stats(data["pressure"]),
-            humidity=_compute_stats(data["humidity"]),
+            temperature=_compute_stats(sensor_data["temperature"]),
+            pressure=_compute_stats(sensor_data["pressure"]),
+            humidity=_compute_stats(sensor_data["humidity"]),
         )
 
     return results
@@ -139,7 +154,7 @@ def detect_anomalies(
     return anomalies
 
 
-def generate_report(readings: list[SensorReading], z_threshold: float = 2.0) -> dict:
+def generate_report(readings: list[SensorReading], z_threshold: float = 2.0) -> dict[str, object]:
     """Generate a structured report for sensor readings.
 
     Args:
@@ -157,7 +172,7 @@ def generate_report(readings: list[SensorReading], z_threshold: float = 2.0) -> 
         timestamps = [r.timestamp for r in readings]
         time_range = {"start": min(timestamps).isoformat(), "end": max(timestamps).isoformat()}
 
-    def to_dict(fs: FieldStats) -> dict:
+    def to_dict(fs: FieldStats) -> dict[str, float | None]:
         def rnd(v: float) -> float | None:
             return round(v, 2) if not math.isnan(v) else None
 

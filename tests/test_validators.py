@@ -1,10 +1,17 @@
 """Tests for sensor_toolkit.validators module."""
 
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
-from sensor_toolkit.validators import SensorReading, validate_batch, validate_reading
+from sensor_toolkit.validators import (
+    SensorReading,
+    validate_batch,
+    validate_csv_file,
+    validate_reading,
+    validate_rows,
+)
 
 
 class TestValidateReading:
@@ -322,3 +329,146 @@ class TestValidateBatch:
         assert result["total"] == 1
         assert result["valid"] == 0
         assert result["invalid"] == 1
+
+
+class TestValidateRows:
+    """Tests for validate_rows function (no file I/O)."""
+
+    def _make_row(
+        self,
+        timestamp: str = "2024-01-15T10:30:00",
+        sensor_id: str = "TI-A1B2-C3D4",
+        temperature: str = "25.0",
+        pressure: str = "500.0",
+        humidity: str = "50.0",
+    ) -> dict[str, str]:
+        return {
+            "timestamp": timestamp,
+            "sensor_id": sensor_id,
+            "temperature": temperature,
+            "pressure": pressure,
+            "humidity": humidity,
+        }
+
+    def test_empty_rows(self) -> None:
+        result = validate_rows([])
+        assert result["total"] == 0
+        assert result["valid"] == 0
+        assert result["invalid"] == 0
+        assert result["errors"] == []
+
+    def test_single_valid_row(self) -> None:
+        result = validate_rows([self._make_row()])
+        assert result["total"] == 1
+        assert result["valid"] == 1
+        assert result["invalid"] == 0
+
+    def test_single_invalid_row_bad_sensor_id(self) -> None:
+        result = validate_rows([self._make_row(sensor_id="INVALID")])
+        assert result["total"] == 1
+        assert result["valid"] == 0
+        assert result["invalid"] == 1
+
+    def test_parse_error_bad_temperature(self) -> None:
+        result = validate_rows([self._make_row(temperature="not_a_number")])
+        assert result["invalid"] == 1
+        assert "Row 0" in result["errors"][0]["messages"][0]
+
+    def test_parse_error_missing_key(self) -> None:
+        row = {"timestamp": "2024-01-15T10:30:00", "sensor_id": "TI-A1B2-C3D4"}
+        result = validate_rows([row])
+        assert result["invalid"] == 1
+
+    def test_parse_error_bad_timestamp(self) -> None:
+        result = validate_rows([self._make_row(timestamp="not-a-date")])
+        assert result["invalid"] == 1
+
+    def test_mixed_valid_and_invalid(self) -> None:
+        rows = [
+            self._make_row(),
+            self._make_row(sensor_id="INVALID"),
+            self._make_row(temperature="999.0"),
+        ]
+        result = validate_rows(rows)
+        assert result["total"] == 3
+        assert result["valid"] == 1
+        assert result["invalid"] == 2
+
+    def test_error_indices_sorted(self) -> None:
+        rows = [
+            self._make_row(temperature="bad"),  # parse error at 0
+            self._make_row(),                   # valid at 1
+            self._make_row(sensor_id="BAD"),    # validation error at 2
+        ]
+        result = validate_rows(rows)
+        indices = [e["index"] for e in result["errors"]]
+        assert indices == sorted(indices)
+
+    def test_range_validation_through_rows(self) -> None:
+        result = validate_rows([self._make_row(humidity="150.0")])
+        assert result["invalid"] == 1
+        assert any("Humidity" in m for m in result["errors"][0]["messages"])
+
+
+class TestValidateCsvFile:
+    """Tests for validate_csv_file (thin I/O wrapper)."""
+
+    def _write_csv(self, tmp_path: Path, rows: list[dict[str, str]]) -> Path:
+        headers = ["timestamp", "sensor_id", "temperature", "pressure", "humidity"]
+        csv_file = tmp_path / "test_data.csv"
+        lines = [",".join(headers)]
+        for row in rows:
+            lines.append(",".join(row[h] for h in headers))
+        csv_file.write_text("\n".join(lines))
+        return csv_file
+
+    def test_valid_csv(self, tmp_path: Path) -> None:
+        rows = [
+            {
+                "timestamp": "2024-01-15T10:30:00",
+                "sensor_id": "TI-A1B2-C3D4",
+                "temperature": "25.0",
+                "pressure": "500.0",
+                "humidity": "50.0",
+            },
+        ]
+        csv_file = self._write_csv(tmp_path, rows)
+        result = validate_csv_file(csv_file)
+        assert result["total"] == 1
+        assert result["valid"] == 1
+
+    def test_invalid_csv_row(self, tmp_path: Path) -> None:
+        rows = [
+            {
+                "timestamp": "2024-01-15T10:30:00",
+                "sensor_id": "INVALID",
+                "temperature": "25.0",
+                "pressure": "500.0",
+                "humidity": "50.0",
+            },
+        ]
+        csv_file = self._write_csv(tmp_path, rows)
+        result = validate_csv_file(csv_file)
+        assert result["total"] == 1
+        assert result["invalid"] == 1
+
+    def test_empty_csv(self, tmp_path: Path) -> None:
+        csv_file = tmp_path / "empty.csv"
+        csv_file.write_text("timestamp,sensor_id,temperature,pressure,humidity\n")
+        result = validate_csv_file(csv_file)
+        assert result["total"] == 0
+
+    def test_matches_validate_rows_output(self, tmp_path: Path) -> None:
+        row_data = {
+            "timestamp": "2024-01-15T10:30:00",
+            "sensor_id": "TI-A1B2-C3D4",
+            "temperature": "200.0",
+            "pressure": "500.0",
+            "humidity": "50.0",
+        }
+        csv_file = self._write_csv(tmp_path, [row_data])
+        file_result = validate_csv_file(csv_file)
+        rows_result = validate_rows([row_data])
+        assert file_result["total"] == rows_result["total"]
+        assert file_result["valid"] == rows_result["valid"]
+        assert file_result["invalid"] == rows_result["invalid"]

@@ -1,3 +1,15 @@
 __pycache__/
 *.pyc
 .venv/
+
+# Test and coverage artifacts
+.coverage
+htmlcov/
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
+# Log files
+*.log
